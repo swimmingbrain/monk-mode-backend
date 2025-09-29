@@ -96,10 +96,10 @@ builder.Services.AddScoped<ITokenService, JWTService>();
 builder.Services.AddCors(options => {
     options.AddPolicy("AllowReactApp",
         policy => policy
-            .WithOrigins("http://localhost:5173") // Your React app's origin
+            .AllowAnyOrigin() // For development only!!!
             .AllowAnyMethod() // Allows all HTTP methods (GET, POST, etc.)
-            .AllowAnyHeader() // Allows all headers
-            .AllowCredentials()); // Allows credentials (cookies, authorization headers)
+            .AllowAnyHeader()); // Allows all headers
+            //.AllowCredentials()); // Allows credentials (cookies, authorization headers)
 });
 
 var app = builder.Build();
@@ -111,7 +111,6 @@ if (app.Environment.IsDevelopment()) {
 }
 
 app.UseCors("AllowReactApp");
-app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
@@ -119,5 +118,5 @@ app.MapControllers();
 // Map SignalR hub
 app.MapHub<NotificationHub>("/hubs/notifications");
 
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
 app.Run();

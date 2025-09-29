@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using monk_mode_backend.Infrastructure;
@@ -11,9 +12,11 @@ using monk_mode_backend.Infrastructure;
 namespace monk_mode_backend.Migrations
 {
     [DbContext(typeof(MonkModeDbContext))]
-    partial class MonkModeDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250603101733_AddTemplatesAndDailyStatistics")]
+    partial class AddTemplatesAndDailyStatistics
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

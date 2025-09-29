@@ -18,7 +18,10 @@ namespace monk_mode_backend.Controllers
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly IMapper _mapper;
 
-        public TasksController(MonkModeDbContext dbContext, UserManager<ApplicationUser> userManager, IMapper mapper)
+        public TasksController(
+            MonkModeDbContext dbContext,
+            UserManager<ApplicationUser> userManager,
+            IMapper mapper)
         {
             _dbContext = dbContext;
             _userManager = userManager;
@@ -34,7 +37,7 @@ namespace monk_mode_backend.Controllers
                 return BadRequest("Title is required.");
 
             // Check if DueDate exists and is in the past
-            if (createDto.DueDate.HasValue && createDto.DueDate.Value.Date < DateTime.Today)
+            if (createDto.DueDate.HasValue && createDto.DueDate.Value.Date < DateTime.UtcNow.Date)
             {
                 return BadRequest("Due Date must be today or in the future.");
             }
@@ -46,7 +49,7 @@ namespace monk_mode_backend.Controllers
             var task = _mapper.Map<UserTask>(createDto);
             task.UserId = user.Id;
             task.IsCompleted = false;
-            task.CreatedAt = DateTime.Now;
+            task.CreatedAt = DateTime.UtcNow;
             task.CompletedAt = null;
 
             _dbContext.Add(task);
@@ -94,13 +97,14 @@ namespace monk_mode_backend.Controllers
         // GET: api/tasks/incomplete
         // Return all incomplete tasks for the logged-in user
         [HttpGet("incomplete")]
-        public async Task<IActionResult> GetIncompleteTasks() {
+        public async Task<IActionResult> GetIncompleteTasks()
+        {
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
                 return Unauthorized();
 
             var incompleteTasks = await _dbContext.Set<UserTask>()
-                .Where(t => t.UserId == user.Id && !t.IsCompleted)  // Filter by user and incomplete tasks
+                .Where(t => t.UserId == user.Id && !t.IsCompleted)
                 .ToListAsync();
 
             var tasksDto = _mapper.Map<List<TaskDTO>>(incompleteTasks);
@@ -136,7 +140,7 @@ namespace monk_mode_backend.Controllers
             if (!wasCompleted && updateDto.IsCompleted)
             {
                 task.IsCompleted = true;
-                task.CompletedAt = DateTime.Now;
+                task.CompletedAt = DateTime.UtcNow;
             }
             else if (wasCompleted && !updateDto.IsCompleted)
             {
@@ -183,7 +187,6 @@ namespace monk_mode_backend.Controllers
             if (user == null)
                 return Unauthorized();
 
-            // Check if the time block exists and belongs to the user
             var timeBlock = await _dbContext.TimeBlocks
                 .FirstOrDefaultAsync(tb => tb.Id == timeblockId && tb.UserId == user.Id);
             if (timeBlock == null)

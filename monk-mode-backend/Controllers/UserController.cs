@@ -29,10 +29,39 @@ namespace monk_mode_backend.Controllers
             {
                 Id = user.Id,
                 Username = user.UserName,
-                Email = user.Email
+                Email = user.Email,
+                XP = user.Xp,
+                Level = user.Level
             };
 
             return Ok(userProfile);
+        }
+
+        [HttpPost("updatexp")]
+        public async Task<IActionResult> UpdateXP([FromBody] UpdateXpRequestDTO request) {
+            var user = await _userManager.GetUserAsync(User);
+            if (user == null)
+                return Unauthorized();
+
+            user.Xp += request.XpToAdd;
+
+            // Level up logic using the dynamic XP requirement
+            while (user.Xp >= GetRequiredXpForNextLevel(user.Level)) {
+                user.Xp -= GetRequiredXpForNextLevel(user.Level);
+                user.Level++;
+            }
+
+            var result = await _userManager.UpdateAsync(user);
+
+            if (result.Succeeded) {
+                return Ok(new { Message = "XP updated successfully", user.Xp, user.Level });
+            } else {
+                return BadRequest(new { result.Errors });
+            }
+        }
+
+        private int GetRequiredXpForNextLevel(int currentLevel) {
+            return 3000 + (currentLevel * 100);
         }
     }
 }

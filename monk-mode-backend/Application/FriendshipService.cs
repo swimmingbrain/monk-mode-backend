@@ -5,8 +5,7 @@ using monk_mode_backend.Domain;
 using monk_mode_backend.Hubs;
 using monk_mode_backend.Infrastructure;
 using monk_mode_backend.Models;
-using System.Data.Entity;
-
+using Microsoft.EntityFrameworkCore;
 namespace monk_mode_backend.Application {
     public class FriendshipService : IFriendshipService {
         private readonly MonkModeDbContext _dbContext;

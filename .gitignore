@@ -236,3 +236,4 @@ _Pvt_Extensions
 # ignore appsettings.json
 appsettings.json
 appsettings.*.json
+monk-mode-backend/Properties/launchSettings.json
