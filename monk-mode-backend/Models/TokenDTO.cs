@@ -1,8 +1,13 @@
-﻿namespace monk_mode_backend.Models {
-    public class TokenDTO {
-        public string token { get; internal set; }
-        public string id { get; internal set; }
-        public DateTime expiration { get; internal set; }
-        public IList<string> roles { get; internal set; }
+﻿using System;
+using System.Collections.Generic;
+
+namespace monk_mode_backend.DTOs
+{
+    public class TokenDTO
+    {
+        public string Token { get; init; } = string.Empty;
+        public string Id { get; init; } = string.Empty;
+        public DateTime Expiration { get; init; }
+        public IList<string> Roles { get; init; } = new List<string>();
     }
 }
