@@ -11,4 +11,4 @@ namespace monk_mode_backend.Models
         public TimeSpan EndTime { get; set; }
         public bool IsFocus { get; set; }
     }
-} 
+}

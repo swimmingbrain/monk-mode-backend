@@ -2,10 +2,16 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using monk_mode_backend.Domain;
-using monk_mode_backend.Models;
+using monk_mode_backend.Models;   // ResponseDTO, UpdateXpRequestDTO
+using monk_mode_backend.DTOs;     // UserProfileDTO
 
 namespace monk_mode_backend.Controllers
 {
+    /// <summary>
+    /// UserController – secure, naming-consistent ("Xp"), null-safe.
+    /// - GET /api/user/profile   -> returns UserProfileDTO
+    /// - POST /api/user/updatexp -> adds Xp and handles level-up
+    /// </summary>
     [Route("api/[controller]")]
     [ApiController]
     [Authorize]
@@ -18,49 +24,74 @@ namespace monk_mode_backend.Controllers
             _userManager = userManager;
         }
 
+        // GET /api/user/profile
         [HttpGet("profile")]
         public async Task<IActionResult> GetProfile()
         {
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
-                return Unauthorized();
+                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
 
-            var userProfile = new UserProfileDTO
+            // Manual map to ensure naming consistency (Xp, not XP)
+            var dto = new UserProfileDTO
             {
                 Id = user.Id,
-                Username = user.UserName,
-                Email = user.Email,
-                XP = user.Xp,
+                Username = user.UserName ?? string.Empty,
+                Email = user.Email ?? string.Empty,
+                Xp = user.Xp,
                 Level = user.Level
             };
 
-            return Ok(userProfile);
+            return Ok(dto);
         }
 
+        // POST /api/user/updatexp
+        // Adds Xp to the current user and applies level-up rules.
         [HttpPost("updatexp")]
-        public async Task<IActionResult> UpdateXP([FromBody] UpdateXpRequestDTO request) {
+        public async Task<IActionResult> UpdateXp([FromBody] UpdateXpRequestDTO request)
+        {
+            if (request == null)
+                return BadRequest(new ResponseDTO { Status = "error", Message = "Invalid payload." });
+
+            // Optional: Basic validation
+            if (request.XpToAdd == 0)
+                return BadRequest(new ResponseDTO { Status = "error", Message = "XpToAdd must be non-zero." });
+
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
-                return Unauthorized();
+                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
 
+            // Update Xp and apply level-up thresholds
             user.Xp += request.XpToAdd;
 
-            // Level up logic using the dynamic XP requirement
-            while (user.Xp >= GetRequiredXpForNextLevel(user.Level)) {
+            // Same rule as your previous controller, only naming fixed to Xp:
+            while (user.Xp >= GetRequiredXpForNextLevel(user.Level))
+            {
                 user.Xp -= GetRequiredXpForNextLevel(user.Level);
                 user.Level++;
             }
 
             var result = await _userManager.UpdateAsync(user);
-
-            if (result.Succeeded) {
-                return Ok(new { Message = "XP updated successfully", user.Xp, user.Level });
-            } else {
-                return BadRequest(new { result.Errors });
+            if (!result.Succeeded)
+            {
+                var message = string.Join("; ", result.Errors.Select(e => $"{e.Code}: {e.Description}"));
+                return BadRequest(new ResponseDTO { Status = "error", Message = message });
             }
+
+            // Lightweight success payload
+            return Ok(new
+            {
+                Status = "success",
+                Message = "Xp updated successfully.",
+                Xp = user.Xp,
+                Level = user.Level
+            });
         }
 
-        private int GetRequiredXpForNextLevel(int currentLevel) {
+        // Keep your XP requirement rule centralized here
+        private static int GetRequiredXpForNextLevel(int currentLevel)
+        {
+            // Same formula as in your existing code: 3000 + (currentLevel * 100)
             return 3000 + (currentLevel * 100);
         }
     }

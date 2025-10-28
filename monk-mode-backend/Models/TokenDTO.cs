@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace monk_mode_backend.DTOs
+namespace monk_mode_backend.Models
 {
     public class TokenDTO
     {

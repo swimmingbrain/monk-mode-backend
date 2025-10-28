@@ -7,149 +7,180 @@ using monk_mode_backend.Domain;
 using monk_mode_backend.Infrastructure;
 using monk_mode_backend.Models;
 
-namespace monk_mode_backend.Controllers {
+namespace monk_mode_backend.Controllers
+{
+    /// <summary>
+    /// TimeBlockController – aligned to your DTO and domain.
+    /// - Uses ResponseDTO for error cases.
+    /// - Only fields present in TimeBlockDTO are used (Title, Date, StartTime, EndTime, IsFocus).
+    /// - Server-enforced ownership: UserId is set from the authenticated user.
+    /// - Ignores client-provided Tasks and UserId on write (overposting guard).
+    /// - Null-safety: userId captured after null-guard to avoid warnings.
+    /// </summary>
     [Route("api/[controller]")]
     [ApiController]
     [Authorize]
-    public class TimeBlockController : ControllerBase {
+    public class TimeBlockController : ControllerBase
+    {
         private readonly MonkModeDbContext _dbContext;
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly IMapper _mapper;
 
-        public TimeBlockController(MonkModeDbContext context, UserManager<ApplicationUser> userManager, IMapper mapper) {
-            _dbContext = context;
+        public TimeBlockController(
+            MonkModeDbContext dbContext,
+            UserManager<ApplicationUser> userManager,
+            IMapper mapper)
+        {
+            _dbContext = dbContext;
             _userManager = userManager;
             _mapper = mapper;
         }
 
-        // POST /time-blocks
-        [HttpPost]
-        public async Task<IActionResult> CreateTimeBlock([FromBody] TimeBlockDTO timeBlockData) {
-            if (timeBlockData == null)
-                return BadRequest("Invalid time block data.");
-
-            var user = await _userManager.GetUserAsync(User);
-            if (user == null)
-                return Unauthorized();
-
-            var timeBlock = _mapper.Map<TimeBlock>(timeBlockData); // AutoMapper maps DTO to Entity
-
-            timeBlock.UserId = user.Id; // Set the user ID manually
-
-            _dbContext.TimeBlocks.Add(timeBlock);
-            await _dbContext.SaveChangesAsync();
-
-            var timeBlockDTO = _mapper.Map<TimeBlockDTO>(timeBlock); // Map the entity back to DTO
-
-            return CreatedAtAction(nameof(GetTimeBlockById), new { id = timeBlock.Id }, timeBlockDTO);
-        }
-
-        // GET /time-blocks
+        // GET /timeblocks
         [HttpGet]
-        public async Task<IActionResult> GetAllTimeBlocks() {
+        public async Task<IActionResult> GetAllTimeBlocks()
+        {
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
-                return Unauthorized();
+                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
 
-            var timeBlocks = await _dbContext.TimeBlocks
-                .Where(tb => tb.UserId == user.Id)
-                .Include(tb => tb.Tasks)
+            var userId = user.Id;
+
+            var blocks = await _dbContext.TimeBlocks
+                .Where(tb => tb.UserId == userId)
+                .OrderByDescending(tb => tb.Date)
+                .ThenByDescending(tb => tb.StartTime)
                 .ToListAsync();
 
-            var timeBlockDTOs = _mapper.Map<List<TimeBlockDTO>>(timeBlocks); // Map list of entities to DTOs
-
-            return Ok(timeBlockDTOs);
+            var dto = _mapper.Map<List<TimeBlockDTO>>(blocks);
+            return Ok(dto);
         }
 
-        // GET /time-blocks/{id}
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetTimeBlockById(int id) {
+        // GET /timeblocks/{id}
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> GetTimeBlockById(int id)
+        {
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
-                return Unauthorized();
+                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
 
-            var timeBlock = await _dbContext.TimeBlocks
-                .FirstOrDefaultAsync(tb => tb.UserId == user.Id && tb.Id == id);
+            var userId = user.Id;
 
-            if (timeBlock == null)
-                return NotFound();
+            var block = await _dbContext.TimeBlocks
+                .FirstOrDefaultAsync(tb => tb.Id == id && tb.UserId == userId);
 
-            var timeBlockDTO = _mapper.Map<TimeBlockDTO>(timeBlock); // Map entity to DTO
+            if (block == null)
+                return NotFound(new ResponseDTO { Status = "error", Message = "Time block not found." });
 
-            return Ok(timeBlockDTO);
+            var dto = _mapper.Map<TimeBlockDTO>(block);
+            return Ok(dto);
         }
 
-        // PUT /time-blocks/{id}
-        [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateTimeBlock(int id, [FromBody] TimeBlockDTO timeBlockData) {
-            if (timeBlockData == null)
-                return BadRequest("Invalid time block data.");
+        // POST /timeblocks
+        [HttpPost]
+        public async Task<IActionResult> CreateTimeBlock([FromBody] TimeBlockDTO dto)
+        {
+            if (dto == null)
+                return BadRequest(new ResponseDTO { Status = "error", Message = "Invalid request body." });
+
+            if (string.IsNullOrWhiteSpace(dto.Title))
+                return BadRequest(new ResponseDTO { Status = "error", Message = "Title is required." });
+
+            if (dto.Date == default)
+                return BadRequest(new ResponseDTO { Status = "error", Message = "Date is required." });
+
+            if (dto.StartTime == default || dto.EndTime == default)
+                return BadRequest(new ResponseDTO { Status = "error", Message = "StartTime and EndTime are required." });
+
+            if (dto.EndTime <= dto.StartTime)
+                return BadRequest(new ResponseDTO { Status = "error", Message = "EndTime must be after StartTime." });
 
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
-                return Unauthorized();
+                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
 
-            var timeBlock = await _dbContext.TimeBlocks
-                .Include(tb => tb.Tasks)
-                .FirstOrDefaultAsync(tb => tb.UserId == user.Id && tb.Id == id);
+            var userId = user.Id;
 
-            if (timeBlock == null)
-                return NotFound();
+            // Manual mapping to avoid overposting (ignore dto.Tasks, dto.UserId)
+            var entity = new TimeBlock
+            {
+                // Id = 0 by default
+                UserId = userId,
+                Title = dto.Title,
+                Date = dto.Date,
+                StartTime = dto.StartTime,
+                EndTime = dto.EndTime,
+                IsFocus = dto.IsFocus
+            };
 
-            // Ensure that each task has the correct UserId
-            foreach (var task in timeBlockData.Tasks) {
-                if (task.UserId == null) {
-                    task.UserId = user.Id;  // Set the UserId for each task
-                }
-            }
-
-            // Get IDs of the tasks that should be linked now
-            var newTaskIds = timeBlockData.Tasks.Select(t => t.Id).ToHashSet();
-
-            timeBlock.Tasks.Clear();
-
-            if (newTaskIds.Any()) {
-                var tasksToAdd = await _dbContext.Tasks
-                    .Where(t => newTaskIds.Contains(t.Id) && t.UserId == user.Id)
-                    .ToListAsync();
-
-                foreach(var task in tasksToAdd) {
-                    timeBlock.Tasks.Add(task);
-                }
-            }
-
-            _mapper.Map(timeBlockData, timeBlock); // Map DTO to entity
-
+            _dbContext.TimeBlocks.Add(entity);
             await _dbContext.SaveChangesAsync();
 
-            return NoContent();  // 204 No Content
+            var result = _mapper.Map<TimeBlockDTO>(entity);
+            return CreatedAtAction(nameof(GetTimeBlockById), new { id = entity.Id }, result);
         }
 
-        // DELETE /time-blocks/{id}
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteTimeBlock(int id) {
+        // PUT /timeblocks/{id}
+        [HttpPut("{id:int}")]
+        public async Task<IActionResult> UpdateTimeBlock(int id, [FromBody] TimeBlockDTO dto)
+        {
+            if (dto == null)
+                return BadRequest(new ResponseDTO { Status = "error", Message = "Invalid request body." });
+
+            if (string.IsNullOrWhiteSpace(dto.Title))
+                return BadRequest(new ResponseDTO { Status = "error", Message = "Title is required." });
+
+            if (dto.Date == default)
+                return BadRequest(new ResponseDTO { Status = "error", Message = "Date is required." });
+
+            if (dto.StartTime == default || dto.EndTime == default)
+                return BadRequest(new ResponseDTO { Status = "error", Message = "StartTime and EndTime are required." });
+
+            if (dto.EndTime <= dto.StartTime)
+                return BadRequest(new ResponseDTO { Status = "error", Message = "EndTime must be after StartTime." });
+
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
-                return Unauthorized();
+                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
 
-            var timeBlock = await _dbContext.TimeBlocks
-                .Include(tb => tb.Tasks)  // Include linked tasks
-                .FirstOrDefaultAsync(tb => tb.UserId == user.Id && tb.Id == id);
+            var userId = user.Id;
 
-            if (timeBlock == null)
-                return NotFound();
+            var block = await _dbContext.TimeBlocks
+                .FirstOrDefaultAsync(tb => tb.Id == id && tb.UserId == userId);
 
-            // Unlink tasks if any are linked
-            if (timeBlock.Tasks.Any()) {
-                foreach (var task in timeBlock.Tasks) {
-                    task.TimeBlockId = null;  // Unlink the task
-                }
-            }
+            if (block == null)
+                return NotFound(new ResponseDTO { Status = "error", Message = "Time block not found." });
 
-            // Remove the time block
-            _dbContext.TimeBlocks.Remove(timeBlock);
+            // Update only allowed fields; ignore client-provided UserId/Tasks
+            block.Title = dto.Title;
+            block.Date = dto.Date;
+            block.StartTime = dto.StartTime;
+            block.EndTime = dto.EndTime;
+            block.IsFocus = dto.IsFocus;
 
-            // Save all changes in a single transaction
+            _dbContext.TimeBlocks.Update(block);
+            await _dbContext.SaveChangesAsync();
+
+            return NoContent();
+        }
+
+        // DELETE /timeblocks/{id}
+        [HttpDelete("{id:int}")]
+        public async Task<IActionResult> DeleteTimeBlock(int id)
+        {
+            var user = await _userManager.GetUserAsync(User);
+            if (user == null)
+                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
+
+            var userId = user.Id;
+
+            var block = await _dbContext.TimeBlocks
+                .FirstOrDefaultAsync(tb => tb.Id == id && tb.UserId == userId);
+
+            if (block == null)
+                return NotFound(new ResponseDTO { Status = "error", Message = "Time block not found." });
+
+            _dbContext.TimeBlocks.Remove(block);
             await _dbContext.SaveChangesAsync();
 
             return NoContent();

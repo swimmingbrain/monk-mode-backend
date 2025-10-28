@@ -11,112 +11,162 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+// --- Services ---
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddControllers();
 builder.Services.AddAutoMapper(typeof(MappingProfile));
 
 var connectionString = builder.Configuration.GetConnectionString("postgresql");
-
 builder.Services.AddDbContext<MonkModeDbContext>(options => options.UseNpgsql(connectionString));
 
 builder.Services.AddSignalR();
 builder.Services.AddScoped<IFriendshipService, FriendshipService>();
+builder.Services.AddScoped<ITokenService, JWTService>();
 
-builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options => {
+// Identity: Password policy hardened (Dozentenfeedback)
+builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
+{
     options.SignIn.RequireConfirmedAccount = false;
     options.User.RequireUniqueEmail = true;
-    options.Password.RequireDigit = false;
-    options.Password.RequiredLength = 6;
-    options.Password.RequireNonAlphanumeric = false;
-    options.Password.RequireUppercase = false;
-    options.Password.RequireLowercase = false;
-}).AddEntityFrameworkStores<MonkModeDbContext>();
 
-builder.Services.AddAuthentication(a => {
+    // Hardened password requirements
+    options.Password.RequireDigit = true;
+    options.Password.RequiredLength = 12;
+    options.Password.RequireNonAlphanumeric = true;
+    options.Password.RequireUppercase = true;
+    options.Password.RequireLowercase = true;
+})
+.AddEntityFrameworkStores<MonkModeDbContext>();
+
+// JWT Authentication: Issuer/Audience/Expiration strictly validated
+builder.Services.AddAuthentication(a =>
+{
     a.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
     a.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
     a.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-}).AddJwtBearer(opt => {
-    opt.TokenValidationParameters = new TokenValidationParameters​ {
-        IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.ASCII.GetBytes(
-                builder.Configuration.GetSection("JwtSettings")["Secret"]!
-                )),
-        ValidateIssuer = false,
-        ValidateAudience = false,
-        RequireExpirationTime = false,
-        ValidateLifetime = true
+})
+.AddJwtBearer(opt =>
+{
+    var secret = builder.Configuration["JwtSettings:Secret"]!;
+    var issuer = builder.Configuration["JwtSettings:Issuer"]!;
+    var audience = builder.Configuration["JwtSettings:Audience"]!;
+
+    opt.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(secret)),
+
+        ValidateIssuer = true,
+        ValidIssuer = issuer,
+
+        ValidateAudience = true,
+        ValidAudience = audience,
+
+        RequireExpirationTime = true,
+        ValidateLifetime = true,
+
+        // klein halten, damit Expiry strikt bleibt
+        ClockSkew = TimeSpan.FromMinutes(2)
     };
 
-    // JWT validation für SignalR
-    opt.Events = new JwtBearerEvents {
-        OnMessageReceived = context => {
+    // JWT für SignalR (Query-Token bei /hubs)
+    opt.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
             var accessToken = context.Request.Query["access_token"];
             var path = context.HttpContext.Request.Path;
 
-            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs")) {
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+            {
                 context.Token = accessToken;
             }
-
-            return System.Threading.Tasks.Task.CompletedTask; // Fully qualify Task
+            return Task.CompletedTask;
         }
     };
 });
 
-builder.Services.AddSwaggerGen(opt => {
-    opt.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme() {
+// Swagger: Bearer-Schema
+builder.Services.AddSwaggerGen(opt =>
+{
+    opt.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
         Name = "Authorization",
         Type = SecuritySchemeType.ApiKey,
         Scheme = "Bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Enter 'Bearer' [space] and then your valid token in the text input below."
+        Description = "Enter 'Bearer {token}'"
     });
     opt.AddSecurityRequirement(new OpenApiSecurityRequirement
-          {
-          {
-             new OpenApiSecurityScheme
-              {
-                Reference = new OpenApiReference
-                {
-                  Type = ReferenceType.SecurityScheme,
-                  Id = "Bearer"
-                }
-              }, new string[] {}
-          }
-        });
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            Array.Empty<string>()
+        }
+    });
 });
 
-builder.Services.AddScoped<ITokenService, JWTService>();
+// CORS: Dev (localhost/Expo) vs. Prod (Whitelist aus Config)
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("DevCors", policy =>
+        policy
+            .WithOrigins(
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:19006",
+                "http://127.0.0.1:19006")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+    // Für Bearer-Auth keine Cookies/Credentials nötig:
+    // -> kein .AllowCredentials()
+    );
 
-// Enable CORS
-builder.Services.AddCors(options => {
-    options.AddPolicy("AllowReactApp",
-        policy => policy
-            .AllowAnyOrigin() // For development only!!!
-            .AllowAnyMethod() // Allows all HTTP methods (GET, POST, etc.)
-            .AllowAnyHeader()); // Allows all headers
-            //.AllowCredentials()); // Allows credentials (cookies, authorization headers)
+    options.AddPolicy("ProdCors", policy =>
+    {
+        var allowed = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+        if (allowed.Length == 0)
+        {
+            // Fail-safe: im Zweifel niemanden erlauben statt AnyOrigin
+            policy.WithOrigins(Array.Empty<string>());
+        }
+        else
+        {
+            policy.WithOrigins(allowed);
+        }
+
+        policy
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+        // Keine Credentials, solange ihr nur Bearer-Header nutzt
+    });
 });
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment()) {
+// --- Pipeline ---
+if (app.Environment.IsDevelopment())
+{
     app.UseSwagger();
     app.UseSwaggerUI();
+    app.UseCors("DevCors");
+}
+else
+{
+    app.UseCors("ProdCors");
 }
 
-app.UseCors("AllowReactApp");
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapControllers();
 
-// Map SignalR hub
+app.MapControllers();
 app.MapHub<NotificationHub>("/hubs/notifications");
 
-//app.UseHttpsRedirection();
+// app.UseHttpsRedirection();
+
 app.Run();
