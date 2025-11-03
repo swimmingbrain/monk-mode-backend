@@ -1,154 +1,151 @@
-using System;
-using System.Linq;
-using System.Threading.Tasks;
-using System.Collections.Generic;
+using AutoMapper;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using monk_mode_backend.Domain;
+using monk_mode_backend.Infrastructure;
+using monk_mode_backend.Models;
 using Microsoft.Extensions.Logging;
-using Microsoft.AspNetCore.Identity;
 
-using monk_mode_backend.Domain;           // ApplicationUser
-using monk_mode_backend.Infrastructure;   // MonkModeDbContext
-using monk_mode_backend.DTOs;             // DailyStatisticsDTO
-using monk_mode_backend.Models;           // ResponseDTO
-
-namespace monk_mode_backend.Controllers
-{
-    /// <summary>
-    /// Changes (security & robustness):
-    /// - [ApiController] + [Authorize]: all endpoints require a logged-in user.
-    /// - Removed dangerous "log every header" behavior to avoid leaking Authorization tokens.
-    /// - Read-only: returns user's own daily stats; write/compute happens server-side elsewhere.
-    /// - Date handling: normalizes to UTC date-only semantics (server-side consistency).
-    /// - Uses ResponseDTO { Status, Message } for error responses (404/400).
-    /// </summary>
+namespace monk_mode_backend.Controllers {
+    [Route("api/[controller]")]
     [ApiController]
     [Authorize]
-    [Route("api/[controller]")]
-    public class DailyStatisticsController : ControllerBase
-    {
-        private readonly MonkModeDbContext _db;
+    public class DailyStatisticsController : ControllerBase {
+        private readonly MonkModeDbContext _dbContext;
         private readonly UserManager<ApplicationUser> _userManager;
+        private readonly IMapper _mapper;
         private readonly ILogger<DailyStatisticsController> _logger;
 
         public DailyStatisticsController(
-            MonkModeDbContext db,
-            UserManager<ApplicationUser> userManager,
-            ILogger<DailyStatisticsController> logger)
-        {
-            _db = db;
+            MonkModeDbContext context, 
+            UserManager<ApplicationUser> userManager, 
+            IMapper mapper,
+            ILogger<DailyStatisticsController> logger) {
+            _dbContext = context;
             _userManager = userManager;
+            _mapper = mapper;
             _logger = logger;
         }
 
-        /// <summary>
-        /// Returns the current user's daily statistics for "today" (UTC-normalized).
-        /// </summary>
-        [HttpGet("today")]
-        public async Task<ActionResult<DailyStatisticsDTO>> GetToday()
-        {
-            var user = await _userManager.GetUserAsync(User);
-            if (user is null)
-            {
-                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
-            }
-
-            var todayUtc = DateTime.UtcNow.Date;
-
-            var stat = await _db.DailyStatistics
-                .AsNoTracking()
-                .Where(s => s.UserId == user.Id && s.Date == todayUtc)
-                .SingleOrDefaultAsync();
-
-            if (stat is null)
-            {
-                return NotFound(new ResponseDTO
-                {
-                    Status = "error",
-                    Message = "No daily statistics found for today."
-                });
-            }
-
-            return Ok(ToDto(stat));
-        }
-
-        /// <summary>
-        /// Returns the current user's daily statistics within a date range (inclusive).
-        /// Dates must be ISO-8601 yyyy-MM-dd; they are treated as UTC dates.
-        /// </summary>
+        // GET /daily-statistics
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<DailyStatisticsDTO>>> GetRange(
-            [FromQuery] string from,
-            [FromQuery] string to)
-        {
-            var user = await _userManager.GetUserAsync(User);
-            if (user is null)
-            {
-                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
+        public async Task<IActionResult> GetDailyStatistics([FromQuery] DateTime? date, [FromQuery] string? friendId) {
+            try {
+                _logger.LogInformation($"Received request - Date: {date}, FriendId: {friendId}");
+                _logger.LogInformation($"Request headers: {string.Join(", ", Request.Headers.Select(h => $"{h.Key}: {h.Value}"))}");
+
+                var user = await _userManager.GetUserAsync(User);
+                if (user == null) {
+                    _logger.LogWarning("Unauthorized access attempt - no user found");
+                    return Unauthorized();
+                }
+
+                _logger.LogInformation($"Authenticated user: {user.Id}");
+
+                string targetUserId = user.Id;
+                ApplicationUser targetUser = user;
+
+                // If friendId is provided, verify friendship and use friend's ID
+                if (!string.IsNullOrEmpty(friendId)) {
+                    _logger.LogInformation($"Checking friendship between user {user.Id} and friend {friendId}");
+
+                    // Verify friend exists
+                    var friend = await _userManager.FindByIdAsync(friendId);
+                    if (friend == null) {
+                        _logger.LogWarning($"Friend with ID {friendId} not found");
+                        return NotFound($"Friend with ID {friendId} not found");
+                    }
+
+                    _logger.LogInformation($"Found friend: {friend.UserName}");
+
+                    // Check friendship in both directions
+                    var friendship = await _dbContext.Friendships
+                        .FirstOrDefaultAsync(f => 
+                            f.Status == "Accepted" && 
+                            ((f.UserId == user.Id && f.FriendId == friendId) || 
+                             (f.UserId == friendId && f.FriendId == user.Id)));
+
+                    if (friendship == null) {
+                        _logger.LogWarning($"No friendship found between user {user.Id} and friend {friendId}");
+                        return Forbid("You are not friends with this user.");
+                    }
+
+                    _logger.LogInformation($"Friendship verified between user {user.Id} and friend {friendId}");
+                    targetUserId = friendId;
+                    targetUser = friend;
+                }
+
+                var query = _dbContext.DailyStatistics
+                    .Where(ds => ds.UserId == targetUserId);
+
+                if (date.HasValue) {
+                    var startOfDay = date.Value.Date;
+                    var endOfDay = startOfDay.AddDays(1);
+                    query = query.Where(ds => ds.Date >= startOfDay && ds.Date < endOfDay);
+                    _logger.LogInformation($"Filtering statistics for date range: {startOfDay} to {endOfDay}");
+                }
+
+                var statistics = await query.ToListAsync();
+                var statisticsDTOs = _mapper.Map<List<DailyStatisticsDTO>>(statistics);
+
+                // Add user information to each DTO
+                foreach (var dto in statisticsDTOs) {
+                    dto.Username = targetUser.UserName;
+                    dto.Xp = targetUser.Xp;
+                    dto.Level = targetUser.Level;
+                }
+
+                _logger.LogInformation($"Retrieved {statisticsDTOs.Count} statistics records for user {targetUserId}");
+                return Ok(statisticsDTOs);
             }
-
-            if (!TryParseDate(from, out var fromDateUtc) || !TryParseDate(to, out var toDateUtc))
-            {
-                return BadRequest(new ResponseDTO
-                {
-                    Status = "error",
-                    Message = "Parameters 'from' and 'to' must be valid dates in format yyyy-MM-dd."
-                });
+            catch (Exception ex) {
+                _logger.LogError(ex, $"Error fetching daily statistics. Date: {date}, FriendId: {friendId}");
+                return StatusCode(500, "An error occurred while fetching statistics");
             }
-
-            if (toDateUtc < fromDateUtc)
-            {
-                return BadRequest(new ResponseDTO
-                {
-                    Status = "error",
-                    Message = "'to' must be greater than or equal to 'from'."
-                });
-            }
-
-            var items = await _db.DailyStatistics
-                .AsNoTracking()
-                .Where(s => s.UserId == user.Id
-                            && s.Date >= fromDateUtc
-                            && s.Date <= toDateUtc)
-                .OrderBy(s => s.Date)
-                .ToListAsync();
-
-            return Ok(items.Select(ToDto));
         }
 
-        // -----------------------
-        // Helpers
-        // -----------------------
+        // POST /daily-statistics/update
+        [HttpPost("update")]
+        public async Task<IActionResult> UpdateDailyStatistics([FromBody] DailyStatisticsDTO statisticsData) {
+            try {
+                if (statisticsData == null) {
+                    _logger.LogWarning("Invalid statistics data received");
+                    return BadRequest("Invalid statistics data.");
+                }
 
-        /// <summary>
-        /// Parses yyyy-MM-dd as a UTC date (DateTime with time 00:00 UTC).
-        /// </summary>
-        private static bool TryParseDate(string input, out DateTime utcDate)
-        {
-            utcDate = default;
-            if (string.IsNullOrWhiteSpace(input)) return false;
+                var user = await _userManager.GetUserAsync(User);
+                if (user == null) {
+                    _logger.LogWarning("Unauthorized access attempt - no user found");
+                    return Unauthorized();
+                }
 
-            // Accept only yyyy-MM-dd to keep it unambiguous and DB-index friendly.
-            if (DateTime.TryParseExact(input, "yyyy-MM-dd",
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.AssumeUniversal |
-                    System.Globalization.DateTimeStyles.AdjustToUniversal,
-                    out var dt))
-            {
-                utcDate = dt.Date; // normalize to date-only UTC
-                return true;
+                var startOfDay = statisticsData.Date.Date;
+                var endOfDay = startOfDay.AddDays(1);
+
+                var existingStats = await _dbContext.DailyStatistics
+                    .FirstOrDefaultAsync(ds => ds.UserId == user.Id && ds.Date >= startOfDay && ds.Date < endOfDay);
+
+                if (existingStats == null) {
+                    // Create new statistics for the day
+                    var newStats = _mapper.Map<DailyStatistics>(statisticsData);
+                    newStats.UserId = user.Id;
+                    _dbContext.DailyStatistics.Add(newStats);
+                    _logger.LogInformation($"Created new statistics for user {user.Id} on {startOfDay}");
+                } else {
+                    // Add to existing statistics instead of overwriting
+                    existingStats.TotalFocusTime += statisticsData.TotalFocusTime;
+                    _logger.LogInformation($"Updated existing statistics for user {user.Id} on {startOfDay}. New total: {existingStats.TotalFocusTime}");
+                }
+
+                await _dbContext.SaveChangesAsync();
+                return NoContent();
             }
-            return false;
+            catch (Exception ex) {
+                _logger.LogError(ex, "Error updating daily statistics");
+                return StatusCode(500, "An error occurred while updating statistics");
+            }
         }
-
-        private static DailyStatisticsDTO ToDto(DailyStatistics s) => new DailyStatisticsDTO
-        {
-            UserId = s.UserId,
-            Date = DateOnly.FromDateTime(s.Date),
-            TotalFocusTime = s.TotalFocusTime,
-            Xp = s.Xp,
-            Level = s.Level
-        };
     }
-}
+} 

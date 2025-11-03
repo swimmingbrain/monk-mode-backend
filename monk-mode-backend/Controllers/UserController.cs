@@ -2,96 +2,74 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using monk_mode_backend.Domain;
-using monk_mode_backend.Models;   // ResponseDTO, UpdateXpRequestDTO
-using monk_mode_backend.DTOs;     // UserProfileDTO
+using monk_mode_backend.Models;
 
 namespace monk_mode_backend.Controllers
 {
-    /// <summary>
-    /// UserController – secure, naming-consistent ("Xp"), null-safe.
-    /// - GET /api/user/profile   -> returns UserProfileDTO
-    /// - POST /api/user/updatexp -> adds Xp and handles level-up
-    /// </summary>
     [Route("api/[controller]")]
     [ApiController]
     [Authorize]
     public class UserController : ControllerBase
     {
         private readonly UserManager<ApplicationUser> _userManager;
+        private const int MaxXpIncrement = 10000;
 
         public UserController(UserManager<ApplicationUser> userManager)
         {
             _userManager = userManager;
         }
 
-        // GET /api/user/profile
         [HttpGet("profile")]
         public async Task<IActionResult> GetProfile()
         {
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
-                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
+                return Unauthorized();
 
-            // Manual map to ensure naming consistency (Xp, not XP)
-            var dto = new UserProfileDTO
+            var userProfile = new UserProfileDTO
             {
                 Id = user.Id,
-                Username = user.UserName ?? string.Empty,
-                Email = user.Email ?? string.Empty,
+                Username = user.UserName,
+                Email = user.Email,
                 Xp = user.Xp,
                 Level = user.Level
             };
 
-            return Ok(dto);
+            return Ok(userProfile);
         }
 
-        // POST /api/user/updatexp
-        // Adds Xp to the current user and applies level-up rules.
         [HttpPost("updatexp")]
-        public async Task<IActionResult> UpdateXp([FromBody] UpdateXpRequestDTO request)
-        {
-            if (request == null)
-                return BadRequest(new ResponseDTO { Status = "error", Message = "Invalid payload." });
-
-            // Optional: Basic validation
-            if (request.XpToAdd == 0)
-                return BadRequest(new ResponseDTO { Status = "error", Message = "XpToAdd must be non-zero." });
-
+        public async Task<IActionResult> UpdateXP([FromBody] UpdateXpRequestDTO request) {
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
-                return Unauthorized(new ResponseDTO { Status = "error", Message = "Unauthorized." });
+                return Unauthorized();
 
-            // Update Xp and apply level-up thresholds
+            if (request == null) {
+                return BadRequest(new { Message = "Request body is required." });
+            }
+
+            if (request.XpToAdd <= 0 || request.XpToAdd > MaxXpIncrement) {
+                return BadRequest(new { Message = $"XpToAdd must be between 1 and {MaxXpIncrement}." });
+            }
+
             user.Xp += request.XpToAdd;
 
-            // Same rule as your previous controller, only naming fixed to Xp:
-            while (user.Xp >= GetRequiredXpForNextLevel(user.Level))
-            {
+            // Level up logic using the dynamic XP requirement
+            while (user.Xp >= GetRequiredXpForNextLevel(user.Level)) {
                 user.Xp -= GetRequiredXpForNextLevel(user.Level);
                 user.Level++;
             }
 
             var result = await _userManager.UpdateAsync(user);
-            if (!result.Succeeded)
-            {
-                var message = string.Join("; ", result.Errors.Select(e => $"{e.Code}: {e.Description}"));
-                return BadRequest(new ResponseDTO { Status = "error", Message = message });
-            }
 
-            // Lightweight success payload
-            return Ok(new
-            {
-                Status = "success",
-                Message = "Xp updated successfully.",
-                Xp = user.Xp,
-                Level = user.Level
-            });
+            if (result.Succeeded) {
+                return Ok(new { Message = "XP updated successfully", user.Xp, user.Level });
+            } else {
+                return BadRequest(new { result.Errors });
+            }
         }
 
-        // Keep your XP requirement rule centralized here
-        private static int GetRequiredXpForNextLevel(int currentLevel)
-        {
-            // Same formula as in your existing code: 3000 + (currentLevel * 100)
+        private int GetRequiredXpForNextLevel(int currentLevel) {
             return 3000 + (currentLevel * 100);
         }
     }

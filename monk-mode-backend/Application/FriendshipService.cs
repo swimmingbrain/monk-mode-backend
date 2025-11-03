@@ -1,23 +1,13 @@
 ﻿using AutoMapper;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.EntityFrameworkCore;
 using monk_mode_backend.Domain;
 using monk_mode_backend.Hubs;
 using monk_mode_backend.Infrastructure;
 using monk_mode_backend.Models;
-
-namespace monk_mode_backend.Application
-{
-    /// <summary>
-    /// FriendshipService – aligned to FriendshipDTO/FriendshipResponseDTO:
-    /// - No writes to non-existing properties (e.g., no .Message).
-    /// - Lists return FriendshipResponseDTO (includes FriendUsername for UI).
-    /// - Errors are thrown as exceptions; controllers map them to ResponseDTO.
-    /// - Defensive null/ownership checks.
-    /// </summary>
-    public class FriendshipService : IFriendshipService
-    {
+using Microsoft.EntityFrameworkCore;
+namespace monk_mode_backend.Application {
+    public class FriendshipService : IFriendshipService {
         private readonly MonkModeDbContext _dbContext;
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly IMapper _mapper;
@@ -27,120 +17,86 @@ namespace monk_mode_backend.Application
             MonkModeDbContext dbContext,
             UserManager<ApplicationUser> userManager,
             IMapper mapper,
-            IHubContext<NotificationHub> hubContext)
-        {
+            IHubContext<NotificationHub> hubContext) {
             _dbContext = dbContext;
             _userManager = userManager;
             _mapper = mapper;
             _hubContext = hubContext;
         }
 
-        /// <summary>
-        /// Returns accepted friendships for userId (UI-enriched).
-        /// </summary>
-        public async Task<IEnumerable<FriendshipResponseDTO>> GetFriendshipsAsync(string userId)
-        {
+        public async Task<IEnumerable<FriendshipDTO>> GetFriendshipsAsync(string userId) {
             var friendships = await _dbContext.Friendships
-                .Where(f => (f.UserId == userId || f.FriendId == userId) && f.Status == "Accepted")
-                .AsNoTracking()
-                .ToListAsync();
+                .Where(f => (f.UserId == userId || f.FriendId == userId) && f.Status == "Accepted").ToListAsync();
 
-            var results = new List<FriendshipResponseDTO>();
+            var friendshipDTOs = new List<FriendshipDTO>();
 
-            foreach (var friendship in friendships)
-            {
-                var otherId = friendship.UserId == userId ? friendship.FriendId : friendship.UserId;
-                var other = await _userManager.FindByIdAsync(otherId);
-                if (other == null) continue;
+            foreach (var friendship in friendships) {
+                var friendId = friendship.UserId == userId ? friendship.FriendId : friendship.UserId;
+                var friend = await _userManager.FindByIdAsync(friendId);
 
-                var dto = _mapper.Map<FriendshipResponseDTO>(friendship);
-                dto.FriendUsername = other.UserName ?? "Unknown";
-                // dto.Status is already mapped from entity ("Accepted")
-                results.Add(dto);
+                var friendshipDTO = _mapper.Map<FriendshipDTO>(friendship);
+                friendshipDTO.FriendUsername = friend.UserName;
+
+                friendshipDTOs.Add(friendshipDTO);
             }
 
-            return results;
+            return friendshipDTOs;
         }
 
-        /// <summary>
-        /// Returns incoming pending friend requests (received by userId).
-        /// </summary>
-        public async Task<IEnumerable<FriendshipResponseDTO>> GetFriendRequestsAsync(string userId)
-        {
-            var requests = await _dbContext.Friendships
+        public async Task<IEnumerable<FriendshipDTO>> GetFriendRequestsAsync(string userId) {
+            var friendRequests = await _dbContext.Friendships
                 .Where(f => f.FriendId == userId && f.Status == "Pending")
-                .AsNoTracking()
                 .ToListAsync();
 
-            var results = new List<FriendshipResponseDTO>();
+            var friendshipDTOs = new List<FriendshipDTO>();
 
-            foreach (var req in requests)
-            {
-                var requester = await _userManager.FindByIdAsync(req.UserId);
-                if (requester == null) continue;
+            foreach (var request in friendRequests) {
+                var requester = await _userManager.FindByIdAsync(request.UserId);
 
-                var dto = _mapper.Map<FriendshipResponseDTO>(req);
-                dto.FriendUsername = requester.UserName ?? "Unknown";
-                // dto.Status = "Pending"
-                results.Add(dto);
-            }
-            return results;
-        }
+                var friendshipDTO = _mapper.Map<FriendshipDTO>(request);
+                friendshipDTO.FriendUsername = requester.UserName;
 
-        /// <summary>
-        /// Returns outgoing pending friend requests (sent by userId).
-        /// </summary>
-        public async Task<IEnumerable<FriendshipResponseDTO>> GetSentFriendRequestsAsync(string userId)
-        {
-            var sent = await _dbContext.Friendships
-                .Where(f => f.UserId == userId && f.Status == "Pending")
-                .AsNoTracking()
-                .ToListAsync();
-
-            var results = new List<FriendshipResponseDTO>();
-            foreach (var s in sent)
-            {
-                var recipient = await _userManager.FindByIdAsync(s.FriendId);
-                if (recipient == null) continue;
-
-                var dto = _mapper.Map<FriendshipResponseDTO>(s);
-                dto.FriendUsername = recipient.UserName ?? "Unknown";
-                // dto.Status = "Pending"
-                results.Add(dto);
+                friendshipDTOs.Add(friendshipDTO);
             }
 
-            return results;
+            return friendshipDTOs;
         }
 
-        /// <summary>
-        /// Creates a pending friend request from userId to friendUsername.
-        /// Throws if invalid (user not found, already friends/request exists, self-add).
-        /// Returns created request as FriendshipResponseDTO.
-        /// </summary>
-        public async Task<FriendshipResponseDTO> SendFriendRequestAsync(string userId, string friendUsername)
-        {
+        public async Task<FriendshipResponseDTO> SendFriendRequestAsync(string userId, string friendUsername) {
+            var response = new FriendshipResponseDTO();
+
+            // Check if friend exists
             var friend = await _userManager.FindByNameAsync(friendUsername);
-            if (friend == null)
-                throw new InvalidOperationException("User not found.");
+            if (friend == null) {
+                response.Status = "Error";
+                response.Message = "User not found.";
+                return response;
+            }
 
             var friendId = friend.Id;
 
-            if (userId == friendId)
-                throw new InvalidOperationException("You cannot add yourself.");
-
-            var existing = await _dbContext.Friendships.FirstOrDefaultAsync(f =>
-                (f.UserId == userId && f.FriendId == friendId) ||
-                (f.UserId == friendId && f.FriendId == userId));
-
-            if (existing != null)
-            {
-                if (existing.Status == "Accepted")
-                    throw new InvalidOperationException("You are already friends.");
-                throw new InvalidOperationException("A friend request already exists.");
+            // Check if user is trying to add themselves
+            if (userId == friendId) {
+                response.Status = "Error";
+                response.Message = "You cannot add yourself as a friend.";
+                return response;
             }
 
-            var friendship = new Friendship
-            {
+            // Check if friendship already exists
+            var existingFriendship = await _dbContext.Friendships
+                .FirstOrDefaultAsync(f =>
+                    (f.UserId == userId && f.FriendId == friendId) ||
+                    (f.UserId == friendId && f.FriendId == userId));
+
+            if (existingFriendship != null) {
+                response.Status = "Error";
+                response.Message = existingFriendship.Status == "Accepted"
+                    ? "You are already friends with this user."
+                    : "A friend request already exists.";
+                return response;
+            }
+
+            var friendship = new Friendship {
                 UserId = userId,
                 FriendId = friendId,
                 Status = "Pending",
@@ -150,90 +106,131 @@ namespace monk_mode_backend.Application
             _dbContext.Friendships.Add(friendship);
             await _dbContext.SaveChangesAsync();
 
+            // Send real-time notification
             var requester = await _userManager.FindByIdAsync(userId);
             await _hubContext.Clients.User(friendId)
-                .SendAsync("ReceiveFriendRequest", userId, requester?.UserName ?? "Unknown");
+                .SendAsync("ReceiveFriendRequest", userId, requester.UserName);
 
-            var dto = _mapper.Map<FriendshipResponseDTO>(friendship);
-            dto.FriendUsername = friend.UserName ?? "Unknown";
-            return dto;
+            var friendshipDTO = _mapper.Map<FriendshipDTO>(friendship);
+            friendshipDTO.FriendUsername = friend.UserName;
+
+            response.Status = "Success";
+            response.Message = "Friend request sent successfully.";
+            response.Friendship = friendshipDTO;
+
+            return response;
         }
 
-        /// <summary>
-        /// Accepts a pending friend request addressed to userId.
-        /// Throws if not found/unauthorized/already handled.
-        /// Returns updated friendship as FriendshipResponseDTO.
-        /// </summary>
-        public async Task<FriendshipResponseDTO> AcceptFriendRequestAsync(string userId, int friendshipId)
-        {
+        public async Task<FriendshipResponseDTO> AcceptFriendRequestAsync(string userId, int friendshipId) {
+            var response = new FriendshipResponseDTO();
+
             var friendship = await _dbContext.Friendships.FindAsync(friendshipId);
-            if (friendship == null)
-                throw new InvalidOperationException("Friend request not found.");
 
-            if (friendship.FriendId != userId)
-                throw new InvalidOperationException("Unauthorized to accept this request.");
+            if (friendship == null) {
+                response.Status = "Error";
+                response.Message = "Friend request not found.";
+                return response;
+            }
 
-            if (friendship.Status != "Pending")
-                throw new InvalidOperationException("Request already handled.");
+            if (friendship.FriendId != userId) {
+                response.Status = "Error";
+                response.Message = "You cannot accept this friend request.";
+                return response;
+            }
+
+            if (friendship.Status != "Pending") {
+                response.Status = "Error";
+                response.Message = "This friend request cannot be accepted.";
+                return response;
+            }
 
             friendship.Status = "Accepted";
             _dbContext.Friendships.Update(friendship);
             await _dbContext.SaveChangesAsync();
 
+            // Send real-time notification
             await _hubContext.Clients.User(friendship.UserId)
                 .SendAsync("FriendRequestAccepted", userId);
 
             var requester = await _userManager.FindByIdAsync(friendship.UserId);
-            var dto = _mapper.Map<FriendshipResponseDTO>(friendship);
-            dto.FriendUsername = requester?.UserName ?? "Unknown";
-            return dto;
+            var friendshipDTO = _mapper.Map<FriendshipDTO>(friendship);
+            friendshipDTO.FriendUsername = requester.UserName;
+
+            response.Status = "Success";
+            response.Message = "Friend request accepted.";
+            response.Friendship = friendshipDTO;
+
+            return response;
         }
 
-        /// <summary>
-        /// Rejects a pending friend request addressed to userId.
-        /// Throws if not found/unauthorized/already handled.
-        /// Returns the removed friendship as a DTO snapshot (optional).
-        /// </summary>
-        public async Task<FriendshipResponseDTO> RejectFriendRequestAsync(string userId, int friendshipId)
-        {
+        public async Task<FriendshipResponseDTO> RejectFriendRequestAsync(string userId, int friendshipId) {
+            var response = new FriendshipResponseDTO();
+
             var friendship = await _dbContext.Friendships.FindAsync(friendshipId);
-            if (friendship == null)
-                throw new InvalidOperationException("Friend request not found.");
 
-            if (friendship.FriendId != userId)
-                throw new InvalidOperationException("Unauthorized to reject this request.");
+            if (friendship == null) {
+                response.Status = "Error";
+                response.Message = "Friend request not found.";
+                return response;
+            }
 
-            if (friendship.Status != "Pending")
-                throw new InvalidOperationException("Request already handled.");
+            if (friendship.FriendId != userId) {
+                response.Status = "Error";
+                response.Message = "You cannot reject this friend request.";
+                return response;
+            }
 
-            var snapshot = _mapper.Map<FriendshipResponseDTO>(friendship);
-            var requester = await _userManager.FindByIdAsync(friendship.UserId);
-            snapshot.FriendUsername = requester?.UserName ?? "Unknown";
+            if (friendship.Status != "Pending") {
+                response.Status = "Error";
+                response.Message = "This friend request cannot be rejected.";
+                return response;
+            }
 
             _dbContext.Friendships.Remove(friendship);
             await _dbContext.SaveChangesAsync();
 
+            // Send real-time notification
             await _hubContext.Clients.User(friendship.UserId)
                 .SendAsync("FriendRequestRejected", userId);
 
-            return snapshot;
+            response.Status = "Success";
+            response.Message = "Friend request rejected.";
+
+            return response;
         }
 
-        /// <summary>
-        /// Removes an accepted friendship if userId is participant.
-        /// Returns true if removed; false if not found/unauthorized/wrong status.
-        /// </summary>
-        public async Task<bool> RemoveFriendAsync(string userId, int friendshipId)
-        {
+        public async Task<bool> RemoveFriendAsync(string userId, int friendshipId) {
             var friendship = await _dbContext.Friendships.FindAsync(friendshipId);
+
             if (friendship == null ||
                 (friendship.UserId != userId && friendship.FriendId != userId) ||
-                friendship.Status != "Accepted")
+                friendship.Status != "Accepted") {
                 return false;
+            }
 
             _dbContext.Friendships.Remove(friendship);
             await _dbContext.SaveChangesAsync();
+
             return true;
+        }
+
+        public async Task<IEnumerable<FriendshipDTO>> GetSentFriendRequestsAsync(string userId) {
+            var sentRequests = await _dbContext.Friendships
+                .Where(f => f.UserId == userId && f.Status == "Pending")
+                .ToListAsync();
+
+            var friendshipDTOs = new List<FriendshipDTO>();
+
+            foreach (var request in sentRequests) {
+                var recipient = await _userManager.FindByIdAsync(request.FriendId);
+
+                var friendshipDTO = _mapper.Map<FriendshipDTO>(request);
+                friendshipDTO.FriendUsername = recipient.UserName;
+
+                friendshipDTOs.Add(friendshipDTO);
+            }
+
+            return friendshipDTOs;
         }
     }
 }

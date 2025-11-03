@@ -48,20 +48,15 @@ namespace monk_mode_backend.Controllers {
         }
 
         // GET /template-blocks/{id}
-        [HttpGet("{id:int}")]
-        public async Task<IActionResult> GetTemplateBlockById(int id)
-        {
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetTemplateBlockById(int id) {
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
                 return Unauthorized();
 
-            // <- nach dem Guard: non-null, also in lokale Variable ziehen
-            var userId = user.Id;
-
             var templateBlock = await _dbContext.TemplateBlocks
                 .Include(tb => tb.Template)
-                .Where(tb => tb.Id == id && tb.Template != null && tb.Template.UserId == userId)
-                .FirstOrDefaultAsync();
+                .FirstOrDefaultAsync(tb => tb.Id == id && tb.Template.UserId == user.Id);
 
             if (templateBlock == null)
                 return NotFound();
@@ -70,21 +65,16 @@ namespace monk_mode_backend.Controllers {
             return Ok(templateBlockDTO);
         }
 
-
         // DELETE /template-blocks/{id}
-        [HttpDelete("{id:int}")]
-        public async Task<IActionResult> DeleteTemplateBlock(int id)
-        {
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteTemplateBlock(int id) {
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
                 return Unauthorized();
 
-            var userId = user.Id; // nach Null-Guard
-
             var templateBlock = await _dbContext.TemplateBlocks
                 .Include(tb => tb.Template)
-                .Where(tb => tb.Id == id && tb.Template != null && tb.Template.UserId == userId)
-                .FirstOrDefaultAsync();
+                .FirstOrDefaultAsync(tb => tb.Id == id && tb.Template.UserId == user.Id);
 
             if (templateBlock == null)
                 return NotFound();
@@ -94,6 +84,5 @@ namespace monk_mode_backend.Controllers {
 
             return NoContent();
         }
-
     }
 } 

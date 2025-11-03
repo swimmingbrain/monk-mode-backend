@@ -1,4 +1,3 @@
-using monk_mode_backend.Models;
 using System;
 using System.Collections.Generic;
 
@@ -11,4 +10,4 @@ namespace monk_mode_backend.Models
         public DateTime CreatedAt { get; set; }
         public List<TemplateBlockDTO> TemplateBlocks { get; set; }
     }
-}
+} 

@@ -5,27 +5,23 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace monk_mode_backend.Domain
 {
-    /// <summary>
-    /// Changes:
-    /// - [Required] on Title and UserId.
-    /// - CreatedAt defaults to UtcNow for consistency.
-    /// - User-scoped ownership (no UserId exposure in DTOs; enforced server-side).
-    /// </summary>
     public class Template
     {
+        [Key]
         public int Id { get; set; }
 
         [Required]
-        public string UserId { get; set; } = string.Empty;
-
-        [Required, StringLength(160)]
-        public string Title { get; set; } = string.Empty;
+        public string UserId { get; set; }
 
         [Required]
+        public string Title { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-        // Navigation
-        public ApplicationUser? User { get; set; }
-        public ICollection<TemplateBlock> TemplateBlocks { get; set; } = new List<TemplateBlock>();
+        // Navigation properties
+        [ForeignKey("UserId")]
+        public ApplicationUser User { get; set; }
+
+        public ICollection<TemplateBlock> TemplateBlocks { get; set; }
     }
-}
+} 
