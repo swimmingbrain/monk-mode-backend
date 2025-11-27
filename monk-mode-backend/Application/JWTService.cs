@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using monk_mode_backend.Domain;
 using monk_mode_backend.Models;
@@ -10,18 +11,24 @@ using System.Text;
 namespace monk_mode_backend.Application {
     public class JWTService : ITokenService {
         private readonly UserManager<ApplicationUser> userManager;
-        private readonly IConfiguration configuration;
+        private readonly JwtSettings jwtSettings;
 
-        public JWTService(UserManager<ApplicationUser> userManager, IConfiguration configuration) {
+        public JWTService(UserManager<ApplicationUser> userManager, IOptions<JwtSettings> jwtOptions) {
             this.userManager = userManager;
-            this.configuration = configuration;
+            this.jwtSettings = jwtOptions.Value;
         }
 
         public async Task<TokenDTO> CreateTokenAsync(ApplicationUser user) {
 
-            var jwtSettings = configuration.GetSection("JwtSettings");
-            var issuer = jwtSettings["Issuer"] ?? throw new InvalidOperationException("JwtSettings:Issuer is not configured.");
-            var audience = jwtSettings["Audience"] ?? throw new InvalidOperationException("JwtSettings:Audience is not configured.");
+            if (string.IsNullOrWhiteSpace(jwtSettings.Secret)) {
+                throw new InvalidOperationException("JwtSettings:Secret is not configured.");
+            }
+            if (string.IsNullOrWhiteSpace(jwtSettings.Issuer)) {
+                throw new InvalidOperationException("JwtSettings:Issuer is not configured.");
+            }
+            if (string.IsNullOrWhiteSpace(jwtSettings.Audience)) {
+                throw new InvalidOperationException("JwtSettings:Audience is not configured.");
+            }
 
             var userRoles = await userManager.GetRolesAsync(user);
             var authClaims = new List<Claim>
@@ -36,10 +43,10 @@ namespace monk_mode_backend.Application {
             }
 
 
-            var authSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(this.configuration.GetSection("JwtSettings")["Secret"]!));
+            var authSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(jwtSettings.Secret));
             var token = new JwtSecurityToken(
-                issuer: issuer,
-                audience: audience,
+                issuer: jwtSettings.Issuer,
+                audience: jwtSettings.Audience,
                 expires: DateTime.UtcNow.AddDays(15),
                 claims: authClaims,
                 signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)

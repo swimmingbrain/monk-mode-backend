@@ -16,7 +16,13 @@
       "launchUrl": "swagger",
       "applicationUrl": "http://0.0.0.0:5139",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__postgresql": "",
+        "JwtSettings__Secret": "",
+        "JwtSettings__Issuer": "monk-mode-backend",
+        "JwtSettings__Audience": "monk-mode-clients",
+        "Cors__AllowedOrigins__0": "",
+        "Cors__AllowedOrigins__1": ""
       }
     },
     "https": {
@@ -26,7 +32,15 @@
       "launchUrl": "swagger",
       "applicationUrl": "https://0.0.0.0:7133",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__postgresql": "",
+        "JwtSettings__Secret": "",
+        "JwtSettings__Issuer": "monk-mode-backend",
+        "JwtSettings__Audience": "monk-mode-clients",
+        "Cors__AllowedOrigins__0": "",
+        "Cors__AllowedOrigins__1": "",
+        "Cors__AllowedOrigins__2": "",
+        "Cors__AllowedOrigins__3": ""
       }
     },
     "IIS Express": {

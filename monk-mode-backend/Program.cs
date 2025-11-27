@@ -19,7 +19,13 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddControllers();
 builder.Services.AddAutoMapper(typeof(MappingProfile));
 
-var connectionString = builder.Configuration.GetConnectionString("postgresql");
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
+
+var connectionString = builder.Configuration.GetConnectionString("postgresql")
+    ?? throw new InvalidOperationException("ConnectionStrings:postgresql is not configured.");
+if (string.IsNullOrWhiteSpace(connectionString)) {
+    throw new InvalidOperationException("ConnectionStrings:postgresql cannot be empty. Provide it via configuration or environment variables.");
+}
 
 builder.Services.AddDbContext<MonkModeDbContext>(options => options.UseNpgsql(connectionString));
 
@@ -36,10 +42,18 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options => {
     options.Password.RequireLowercase = true;
 }).AddEntityFrameworkStores<MonkModeDbContext>();
 
-var jwtSettings = builder.Configuration.GetSection("JwtSettings");
-var jwtSecret = jwtSettings["Secret"] ?? throw new InvalidOperationException("JwtSettings:Secret is not configured.");
-var jwtIssuer = jwtSettings["Issuer"] ?? throw new InvalidOperationException("JwtSettings:Issuer is not configured.");
-var jwtAudience = jwtSettings["Audience"] ?? throw new InvalidOperationException("JwtSettings:Audience is not configured.");
+var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>()
+    ?? throw new InvalidOperationException("JwtSettings section is missing.");
+if (string.IsNullOrWhiteSpace(jwtSettings.Secret)) {
+    throw new InvalidOperationException("JwtSettings:Secret is not configured or empty.");
+}
+if (string.IsNullOrWhiteSpace(jwtSettings.Issuer)) {
+    throw new InvalidOperationException("JwtSettings:Issuer is not configured or empty.");
+}
+if (string.IsNullOrWhiteSpace(jwtSettings.Audience)) {
+    throw new InvalidOperationException("JwtSettings:Audience is not configured or empty.");
+}
+var jwtSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(jwtSettings.Secret));
 
 builder.Services.AddAuthentication(a => {
     a.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -47,9 +61,10 @@ builder.Services.AddAuthentication(a => {
     a.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
 }).AddJwtBearer(opt => {
     opt.TokenValidationParameters = new TokenValidationParameters {
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(jwtSecret)),
-        ValidIssuer = jwtIssuer,
-        ValidAudience = jwtAudience,
+        IssuerSigningKey = jwtSigningKey,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtSettings.Issuer,
+        ValidAudience = jwtSettings.Audience,
         ValidateIssuer = true,
         ValidateAudience = true,
         RequireExpirationTime = true,
@@ -99,9 +114,15 @@ builder.Services.AddScoped<ITokenService, JWTService>();
 
 // Enable CORS
 var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+var allowedOrigins = corsOrigins
+    .Where(origin => !string.IsNullOrWhiteSpace(origin))
+    .Select(origin => origin.TrimEnd('/'))
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray();
+
 builder.Services.AddCors(options => {
     options.AddPolicy("FrontendCorsPolicy", policy => {
-        var origins = corsOrigins;
+        var origins = allowedOrigins;
 
         if (builder.Environment.IsDevelopment()) {
             if (origins.Length == 0) {
@@ -111,10 +132,11 @@ builder.Services.AddCors(options => {
                 };
             }
 
-            policy.WithOrigins(origins)
-                  .AllowAnyHeader()
-                  .AllowAnyMethod()
-                  .AllowCredentials();
+            var devPolicy = policy.WithOrigins(origins)
+                                  .AllowAnyHeader()
+                                  .AllowAnyMethod();
+
+            devPolicy.AllowCredentials();
         } else {
             if (origins.Length == 0) {
                 throw new InvalidOperationException("Cors:AllowedOrigins must be configured for production.");
