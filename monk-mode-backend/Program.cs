@@ -7,6 +7,7 @@ using monk_mode_backend.Application;
 using monk_mode_backend.Domain;
 using monk_mode_backend.Hubs;
 using monk_mode_backend.Infrastructure;
+using System;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,27 +29,32 @@ builder.Services.AddScoped<IFriendshipService, FriendshipService>();
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options => {
     options.SignIn.RequireConfirmedAccount = false;
     options.User.RequireUniqueEmail = true;
-    options.Password.RequireDigit = false;
-    options.Password.RequiredLength = 6;
-    options.Password.RequireNonAlphanumeric = false;
-    options.Password.RequireUppercase = false;
-    options.Password.RequireLowercase = false;
+    options.Password.RequireDigit = true;
+    options.Password.RequiredLength = 12;
+    options.Password.RequireNonAlphanumeric = true;
+    options.Password.RequireUppercase = true;
+    options.Password.RequireLowercase = true;
 }).AddEntityFrameworkStores<MonkModeDbContext>();
+
+var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+var jwtSecret = jwtSettings["Secret"] ?? throw new InvalidOperationException("JwtSettings:Secret is not configured.");
+var jwtIssuer = jwtSettings["Issuer"] ?? throw new InvalidOperationException("JwtSettings:Issuer is not configured.");
+var jwtAudience = jwtSettings["Audience"] ?? throw new InvalidOperationException("JwtSettings:Audience is not configured.");
 
 builder.Services.AddAuthentication(a => {
     a.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
     a.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
     a.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
 }).AddJwtBearer(opt => {
-    opt.TokenValidationParameters = new TokenValidationParameters​ {
-        IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.ASCII.GetBytes(
-                builder.Configuration.GetSection("JwtSettings")["Secret"]!
-                )),
-        ValidateIssuer = false,
-        ValidateAudience = false,
-        RequireExpirationTime = false,
-        ValidateLifetime = true
+    opt.TokenValidationParameters = new TokenValidationParameters {
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(jwtSecret)),
+        ValidIssuer = jwtIssuer,
+        ValidAudience = jwtAudience,
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        RequireExpirationTime = true,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.FromMinutes(1)
     };
 
     // JWT validation für SignalR
@@ -89,17 +95,36 @@ builder.Services.AddSwaggerGen(opt => {
           }
         });
 });
-
 builder.Services.AddScoped<ITokenService, JWTService>();
 
 // Enable CORS
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
 builder.Services.AddCors(options => {
-    options.AddPolicy("AllowReactApp",
-        policy => policy
-            .AllowAnyOrigin() // For development only!!!
-            .AllowAnyMethod() // Allows all HTTP methods (GET, POST, etc.)
-            .AllowAnyHeader()); // Allows all headers
-            //.AllowCredentials()); // Allows credentials (cookies, authorization headers)
+    options.AddPolicy("FrontendCorsPolicy", policy => {
+        var origins = corsOrigins;
+
+        if (builder.Environment.IsDevelopment()) {
+            if (origins.Length == 0) {
+                origins = new[] {
+                    "http://localhost:3000",
+                    "http://localhost:19006"
+                };
+            }
+
+            policy.WithOrigins(origins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        } else {
+            if (origins.Length == 0) {
+                throw new InvalidOperationException("Cors:AllowedOrigins must be configured for production.");
+            }
+
+            policy.WithOrigins(origins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        }
+    });
 });
 
 var app = builder.Build();
@@ -110,7 +135,7 @@ if (app.Environment.IsDevelopment()) {
     app.UseSwaggerUI();
 }
 
-app.UseCors("AllowReactApp");
+app.UseCors("FrontendCorsPolicy");
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
