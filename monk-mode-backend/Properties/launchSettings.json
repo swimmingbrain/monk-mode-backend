@@ -17,12 +17,12 @@
       "applicationUrl": "http://0.0.0.0:5139",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "ConnectionStrings__postgresql": "",
-        "JwtSettings__Secret": "",
+        "ConnectionStrings__postgresql": "User ID=monkadmin;Password=monkadminpwd;Host=devdb1.vimaya.app;Port=444;Database=vimaya_db",
+        "JwtSettings__Secret": "9999verysuperlongjwtsecretsuperkey9999",
         "JwtSettings__Issuer": "monk-mode-backend",
         "JwtSettings__Audience": "monk-mode-clients",
-        "Cors__AllowedOrigins__0": "",
-        "Cors__AllowedOrigins__1": ""
+        "Cors__AllowedOrigins__0": "http://192.168.1.20:3000",
+        "Cors__AllowedOrigins__1": "http://192.168.1.20:19006"
       }
     },
     "https": {

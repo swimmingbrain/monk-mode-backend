@@ -20,6 +20,7 @@ builder.Services.AddControllers();
 builder.Services.AddAutoMapper(typeof(MappingProfile));
 
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
+builder.Services.Configure<ApiKeyAuthSettings>(builder.Configuration.GetSection("ApiKeyAuth"));
 
 var connectionString = builder.Configuration.GetConnectionString("postgresql")
     ?? throw new InvalidOperationException("ConnectionStrings:postgresql is not configured.");
@@ -41,6 +42,17 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options => {
     options.Password.RequireUppercase = true;
     options.Password.RequireLowercase = true;
 }).AddEntityFrameworkStores<MonkModeDbContext>();
+
+var apiKeySettings = builder.Configuration.GetSection("ApiKeyAuth").Get<ApiKeyAuthSettings>() ?? new ApiKeyAuthSettings();
+if (apiKeySettings.Enabled) {
+    if (string.IsNullOrWhiteSpace(apiKeySettings.Key)) {
+        throw new InvalidOperationException("ApiKeyAuth:Key is not configured or empty.");
+    }
+
+    if (string.IsNullOrWhiteSpace(apiKeySettings.Header)) {
+        throw new InvalidOperationException("ApiKeyAuth:Header is not configured or empty.");
+    }
+}
 
 var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>()
     ?? throw new InvalidOperationException("JwtSettings section is missing.");
@@ -87,28 +99,44 @@ builder.Services.AddAuthentication(a => {
     };
 });
 
+var apiKeyHeaderName = builder.Configuration.GetValue<string>("ApiKeyAuth:Header") ?? "X-Api-Key";
+
 builder.Services.AddSwaggerGen(opt => {
-    opt.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme() {
+    opt.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme {
+        Description = "JWT bearer auth: enter 'Bearer' plus your token.",
         Name = "Authorization",
-        Type = SecuritySchemeType.ApiKey,
+        Type = SecuritySchemeType.Http,
         Scheme = "Bearer",
         BearerFormat = "JWT",
-        In = ParameterLocation.Header,
-        Description = "Enter 'Bearer' [space] and then your valid token in the text input below."
+        In = ParameterLocation.Header
     });
-    opt.AddSecurityRequirement(new OpenApiSecurityRequirement
-          {
-          {
-             new OpenApiSecurityScheme
-              {
-                Reference = new OpenApiReference
-                {
-                  Type = ReferenceType.SecurityScheme,
-                  Id = "Bearer"
+
+    opt.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme {
+        Description = $"API key header '{apiKeyHeaderName}'.",
+        Name = apiKeyHeaderName,
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "ApiKey"
+    });
+
+    opt.AddSecurityRequirement(new OpenApiSecurityRequirement {
+        {
+            new OpenApiSecurityScheme {
+                Reference = new OpenApiReference {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
                 }
-              }, new string[] {}
-          }
-        });
+            }, Array.Empty<string>()
+        },
+        {
+            new OpenApiSecurityScheme {
+                Reference = new OpenApiReference {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "ApiKey"
+                }
+            }, Array.Empty<string>()
+        }
+    });
 });
 builder.Services.AddScoped<ITokenService, JWTService>();
 
@@ -158,6 +186,7 @@ if (app.Environment.IsDevelopment()) {
 }
 
 app.UseCors("FrontendCorsPolicy");
+app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
