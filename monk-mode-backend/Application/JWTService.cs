@@ -2,6 +2,7 @@
 using Microsoft.IdentityModel.Tokens;
 using monk_mode_backend.Domain;
 using monk_mode_backend.Models;
+using System;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -18,6 +19,10 @@ namespace monk_mode_backend.Application {
 
         public async Task<TokenDTO> CreateTokenAsync(ApplicationUser user) {
 
+            var jwtSettings = configuration.GetSection("JwtSettings");
+            var issuer = jwtSettings["Issuer"] ?? throw new InvalidOperationException("JwtSettings:Issuer is not configured.");
+            var audience = jwtSettings["Audience"] ?? throw new InvalidOperationException("JwtSettings:Audience is not configured.");
+
             var userRoles = await userManager.GetRolesAsync(user);
             var authClaims = new List<Claim>
                 {
@@ -33,7 +38,9 @@ namespace monk_mode_backend.Application {
 
             var authSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(this.configuration.GetSection("JwtSettings")["Secret"]!));
             var token = new JwtSecurityToken(
-                expires: DateTime.Now.AddDays(15),
+                issuer: issuer,
+                audience: audience,
+                expires: DateTime.UtcNow.AddDays(15),
                 claims: authClaims,
                 signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
                 );

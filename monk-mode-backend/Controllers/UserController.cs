@@ -12,6 +12,7 @@ namespace monk_mode_backend.Controllers
     public class UserController : ControllerBase
     {
         private readonly UserManager<ApplicationUser> _userManager;
+        private const int MaxXpIncrement = 10000;
 
         public UserController(UserManager<ApplicationUser> userManager)
         {
@@ -30,7 +31,7 @@ namespace monk_mode_backend.Controllers
                 Id = user.Id,
                 Username = user.UserName,
                 Email = user.Email,
-                XP = user.Xp,
+                Xp = user.Xp,
                 Level = user.Level
             };
 
@@ -42,6 +43,14 @@ namespace monk_mode_backend.Controllers
             var user = await _userManager.GetUserAsync(User);
             if (user == null)
                 return Unauthorized();
+
+            if (request == null) {
+                return BadRequest(new { Message = "Request body is required." });
+            }
+
+            if (request.XpToAdd <= 0 || request.XpToAdd > MaxXpIncrement) {
+                return BadRequest(new { Message = $"XpToAdd must be between 1 and {MaxXpIncrement}." });
+            }
 
             user.Xp += request.XpToAdd;
 
