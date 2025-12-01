@@ -99,7 +99,7 @@ builder.Services.AddAuthentication(a => {
     };
 });
 
-var apiKeyHeaderName = builder.Configuration.GetValue<string>("ApiKeyAuth:Header") ?? "X-Api-Key";
+var apiKeyHeaderName = builder.Configuration.GetValue<string>("ApiKeyAuth:Header") ?? "Vimaya-Api-Key";
 
 builder.Services.AddSwaggerGen(opt => {
     opt.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme {
